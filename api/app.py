@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 import os
 import smtplib
 from email.message import EmailMessage
@@ -14,20 +14,33 @@ except Exception:
     pass
 
 
-@app.after_request
-def add_cors_headers(response):
-    # Allow simple cross-origin testing from different ports (localhost)
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-    return response
+# CORS handling: use a before_request handler for OPTIONS preflight
+# and attach minimal CORS headers to actual responses via a helper.
+# This is serverless-friendly (Vercel) and avoids relying on after_request.
+@app.before_request
+def _handle_cors_preflight():
+    # Handle CORS preflight (OPTIONS) early and return the required headers.
+    if request.method == 'OPTIONS':
+        resp = make_response('', 204)
+        origin = request.headers.get('Origin')
+        resp.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+        resp.headers['Access-Control-Allow-Methods'] = 'POST, GET, OPTIONS'
+        resp.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+        resp.headers['Access-Control-Max-Age'] = '3600'
+        resp.headers['Vary'] = 'Origin'
+        return resp
+
+
+def _attach_cors(resp):
+    # Attach minimal CORS headers to actual (non-OPTIONS) responses.
+    origin = request.headers.get('Origin')
+    resp.headers['Access-Control-Allow-Origin'] = origin if origin else '*'
+    resp.headers['Vary'] = 'Origin'
+    return resp
 
 
 @app.route('/send-mail', methods=['POST', 'OPTIONS'])
 def send_mail():
-    # Respond to CORS preflight immediately
-    if request.method == 'OPTIONS':
-        return jsonify(success=True), 200
 
     try:
         data = request.get_json(force=True)
@@ -41,13 +54,17 @@ def send_mail():
 
     # Basic validation
     if not name or not email or not message:
-        return jsonify(success=False, error='Missing required fields'), 400
+        resp = jsonify(success=False, error='Missing required fields')
+        resp.status_code = 400
+        return _attach_cors(resp)
 
     GMAIL_USER = os.environ.get('GMAIL_USER')
     GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
 
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        return jsonify(success=False, error='Mail credentials not configured'), 500
+        resp = jsonify(success=False, error='Mail credentials not configured')
+        resp.status_code = 500
+        return _attach_cors(resp)
 
     source = (data.get('source') or 'index').strip().lower()
 
@@ -160,10 +177,14 @@ def send_mail():
             except Exception:
                 app.logger.exception('Failed to send confirmation email to user')
 
-        return jsonify(success=True, user_email_sent=user_email_sent), 200
+        resp = jsonify(success=True, user_email_sent=user_email_sent)
+        resp.status_code = 200
+        return _attach_cors(resp)
     except Exception as e:
         app.logger.exception('Failed to send email')
-        return jsonify(success=False, error=str(e)), 500
+        resp = jsonify(success=False, error=str(e))
+        resp.status_code = 500
+        return _attach_cors(resp)
 
 
 if __name__ == '__main__':
