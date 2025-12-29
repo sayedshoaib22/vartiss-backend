@@ -6,12 +6,7 @@ from email.message import EmailMessage
 
 app = Flask(__name__)
 
-# Load .env locally if available (Vercel ignores .env and uses dashboard vars)
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+# Note: dotenv loading removed — environment variables must be provided externally
 
 
 # -------------------- CORS (Vercel-safe) --------------------
@@ -35,6 +30,17 @@ def attach_cors(resp):
     return resp
 
 
+@app.after_request
+def add_cors_headers(response):
+    # Ensure all responses include the same CORS headers as preflight.
+    origin = request.headers.get("Origin")
+    response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
+    response.headers["Vary"] = "Origin"
+    response.headers.setdefault("Access-Control-Allow-Methods", "POST, OPTIONS")
+    response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
+    return response
+
+
 # -------------------- ASYNC EMAIL WORKER --------------------
 def send_email_async(
     name,
@@ -44,8 +50,12 @@ def send_email_async(
     source
 ):
     try:
-        GMAIL_USER = os.environ.get("GMAIL_USER")
-        GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+        # Read Gmail credentials from environment variables.
+        # Accept a couple of common names for compatibility.
+        GMAIL_USER = os.environ.get("GMAIL_USER") or os.environ.get("GMAIL_EMAIL")
+        GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD") or os.environ.get("GMAIL_PASSWORD")
+        # Destination/studio email (who receives form submissions).
+        STUDIO_EMAIL = os.environ.get("STUDIO_EMAIL", "vartisticstudio@gmail.com")
 
         if not GMAIL_USER or not GMAIL_APP_PASSWORD:
             print("❌ Gmail credentials missing")
@@ -57,7 +67,7 @@ def send_email_async(
             # -------- Email to Studio --------
             msg = EmailMessage()
             msg["From"] = GMAIL_USER
-            msg["To"] = "vartisticstudio@gmail.com"
+            msg["To"] = STUDIO_EMAIL
 
             if source == "contact":
                 msg["Subject"] = "🚀 New Contact Enquiry – Vartistic Studio"
