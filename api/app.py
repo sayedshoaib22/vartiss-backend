@@ -1,15 +1,11 @@
 from flask import Flask, request, jsonify, make_response
 import os
 import smtplib
-import threading
 from email.message import EmailMessage
 
 app = Flask(__name__)
 
-# Note: dotenv loading removed — environment variables must be provided externally
-
-
-# -------------------- CORS (Vercel-safe) --------------------
+# -------------------- CORS --------------------
 @app.before_request
 def handle_preflight():
     if request.method == "OPTIONS":
@@ -32,80 +28,70 @@ def attach_cors(resp):
 
 @app.after_request
 def add_cors_headers(response):
-    # Ensure all responses include the same CORS headers as preflight.
     origin = request.headers.get("Origin")
     response.headers["Access-Control-Allow-Origin"] = origin if origin else "*"
-    response.headers["Vary"] = "Origin"
     response.headers.setdefault("Access-Control-Allow-Methods", "POST, OPTIONS")
     response.headers.setdefault("Access-Control-Allow-Headers", "Content-Type")
+    response.headers["Vary"] = "Origin"
     return response
 
 
-# -------------------- ASYNC EMAIL WORKER --------------------
-def send_email_async(
-    name,
-    email,
-    phone,
-    message,
-    source
+# -------------------- EMAIL SENDER --------------------
+def send_email(
+    name: str,
+    email: str,
+    phone: str,
+    message: str,
+    source: str
 ):
-    try:
-        # Read Gmail credentials from environment variables.
-        # Accept a couple of common names for compatibility.
-        GMAIL_USER = os.environ.get("GMAIL_USER") or os.environ.get("GMAIL_EMAIL")
-        GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD") or os.environ.get("GMAIL_PASSWORD")
-        # Destination/studio email (who receives form submissions).
-        STUDIO_EMAIL = os.environ.get("STUDIO_EMAIL", "vartisticstudio@gmail.com")
+    # Environment variables (Render Dashboard)
+    GMAIL_USER = os.environ.get("GMAIL_USER")
+    GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+    STUDIO_EMAIL = os.environ.get("STUDIO_EMAIL", "vartisticstudio@gmail.com")
 
-        if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-            print("❌ Gmail credentials missing")
-            return
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
+        raise RuntimeError("Gmail credentials missing in environment variables")
 
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-            smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+        smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
 
-            # -------- Email to Studio --------
-            msg = EmailMessage()
-            msg["From"] = GMAIL_USER
-            msg["To"] = STUDIO_EMAIL
+        # -------- Mail to Studio --------
+        studio_msg = EmailMessage()
+        studio_msg["From"] = GMAIL_USER
+        studio_msg["To"] = STUDIO_EMAIL
 
-            if source == "contact":
-                msg["Subject"] = "🚀 New Contact Enquiry – Vartistic Studio"
-                title = "Contact Page Submission"
-            else:
-                msg["Subject"] = "🚀 New Website Enquiry – Vartistic Studio"
-                title = "Website Enquiry"
+        if source == "contact":
+            studio_msg["Subject"] = "🚀 New Contact Enquiry – Vartistic Studio"
+            title = "Contact Page Submission"
+        else:
+            studio_msg["Subject"] = "🚀 New Website Enquiry – Vartistic Studio"
+            title = "Website Enquiry"
 
-            phone_display = phone if phone else "Not provided"
+        phone_display = phone if phone else "Not provided"
 
-            msg.set_content(
-                f"{title}\n\n"
-                f"Name: {name}\n"
-                f"Email: {email}\n"
-                f"Phone: {phone_display}\n\n"
-                f"Message:\n{message}"
+        studio_msg.set_content(
+            f"{title}\n\n"
+            f"Name: {name}\n"
+            f"Email: {email}\n"
+            f"Phone: {phone_display}\n\n"
+            f"Message:\n{message}"
+        )
+
+        smtp.send_message(studio_msg)
+
+        # -------- Confirmation Mail to User --------
+        if email:
+            user_msg = EmailMessage()
+            user_msg["From"] = GMAIL_USER
+            user_msg["To"] = email
+            user_msg["Subject"] = "Vartistic Studio — We received your enquiry"
+            user_msg.set_content(
+                f"Hi {name},\n\n"
+                f"Thank you for contacting Vartistic Studio.\n"
+                f"Our team will get back to you shortly.\n\n"
+                f"— Vartistic Studio"
             )
-
-            smtp.send_message(msg)
-
-            # -------- Confirmation to User --------
-            if email:
-                confirm = EmailMessage()
-                confirm["From"] = GMAIL_USER
-                confirm["To"] = email
-                confirm["Subject"] = "Vartistic Studio — We received your enquiry"
-                confirm.set_content(
-                    f"Hi {name},\n\n"
-                    f"Thank you for contacting Vartistic Studio.\n"
-                    f"Our team will reach out to you shortly.\n\n"
-                    f"— Vartistic Studio"
-                )
-                smtp.send_message(confirm)
-
-        print("✅ Email sent successfully (async)")
-
-    except Exception as e:
-        print("❌ Async email error:", e)
+            smtp.send_message(user_msg)
 
 
 # -------------------- API ROUTE --------------------
@@ -122,25 +108,27 @@ def send_mail():
     message = (data.get("message") or "").strip()
     source = (data.get("source") or "index").strip().lower()
 
-    # Basic validation
+    # Validation
     if not name or not email or not message:
         resp = jsonify(success=False, error="Missing required fields")
         resp.status_code = 400
         return attach_cors(resp)
 
-    # 🔥 START BACKGROUND EMAIL (NON-BLOCKING)
-    threading.Thread(
-        target=send_email_async,
-        args=(name, email, phone, message, source),
-        daemon=True
-    ).start()
+    try:
+        # ✅ SEND EMAIL DIRECTLY (NO THREADING)
+        send_email(name, email, phone, message, source)
+    except Exception as e:
+        print("❌ Email send error:", e)
+        resp = jsonify(success=False, error="Email failed to send")
+        resp.status_code = 500
+        return attach_cors(resp)
 
-    # ✅ IMMEDIATE RESPONSE (THIS FIXES NETWORK ERROR)
     resp = jsonify(success=True)
     resp.status_code = 200
     return attach_cors(resp)
 
 
-# -------------------- LOCAL DEV ONLY --------------------
+# -------------------- LOCAL / RENDER --------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
