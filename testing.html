@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Vartiss Backend Mail Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #020617;
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    .box {
+      width: 360px;
+      background: #020617;
+      border: 1px solid #1e293b;
+      padding: 20px;
+      border-radius: 10px;
+    }
+    h2 {
+      text-align: center;
+      color: #38bdf8;
+    }
+    input, textarea, button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 6px;
+      border: none;
+    }
+    input, textarea {
+      background: #020617;
+      color: white;
+      border: 1px solid #1e293b;
+    }
+    button {
+      background: #38bdf8;
+      color: black;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    #res {
+      margin-top: 10px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+<div class="box">
+  <h2>Mail API Test</h2>
+
+  <input id="name" placeholder="Your Name" />
+  <input id="email" placeholder="Your Email" />
+  <input id="phone" placeholder="Phone (optional)" />
+  <textarea id="message" placeholder="Message"></textarea>
+
+  <button onclick="send()">Send Mail</button>
+
+  <div id="res"></div>
+</div>
+
+<script>
+async function send() {
+  const payload = {
+    name: document.getElementById("name").value,
+    email: document.getElementById("email").value,
+    phone: document.getElementById("phone").value,
+    message: document.getElementById("message").value,
+    source: "test-html"
+  };
+
+  console.log("Sending:", payload);
+
+  const resBox = document.getElementById("res");
+  resBox.innerText = "Sending...";
+
+  try {
+    const r = await fetch(
+      "https://vartiss-backend-2.onrender.com/send-mail",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      }
+    );
+
+    const data = await r.json();
+    console.log("Response:", data);
+
+    if (data.success) {
+      resBox.innerText = "✅ Mail sent successfully";
+      resBox.style.color = "lightgreen";
+    } else {
+      resBox.innerText = "❌ " + data.error;
+      resBox.style.color = "red";
+    }
+
+  } catch (e) {
+    console.error(e);
+    resBox.innerText = "❌ Server error";
+    resBox.style.color = "red";
+  }
+}
+</script>
+
+</body>
+</html>

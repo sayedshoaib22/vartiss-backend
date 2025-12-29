@@ -36,30 +36,27 @@ def add_cors_headers(response):
     return response
 
 
-# -------------------- EMAIL SENDER --------------------
-def send_email(
-    name: str,
-    email: str,
-    phone: str,
-    message: str,
-    source: str
-):
-    # Environment variables (Render Dashboard)
-    GMAIL_USER = os.environ.get("GMAIL_USER")
-    GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD")
+# -------------------- EMAIL SENDER (DUAL SMTP) --------------------
+def send_email(name, email, phone, message, source):
+    # ---------- SMTP 1 (PRIMARY - EXE / MAIN) ----------
+    SMTP1_USER = os.environ.get("GMAIL_USER")
+    SMTP1_PASS = os.environ.get("GMAIL_APP_PASSWORD")
+
+    # ---------- SMTP 2 (BACKUP - SERVER / CODE) ----------
+    SMTP2_USER = os.environ.get("GMAIL_USER_BACKUP")
+    SMTP2_PASS = os.environ.get("GMAIL_APP_PASSWORD_BACKUP")
+
     STUDIO_EMAIL = os.environ.get("STUDIO_EMAIL", "vartisticstudio@gmail.com")
 
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        raise RuntimeError("Gmail credentials missing in environment variables")
+    if not SMTP1_USER or not SMTP1_PASS:
+        raise RuntimeError("Primary SMTP credentials missing")
 
-    with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+    phone_display = phone if phone else "Not provided"
 
-        # -------- Mail to Studio --------
+    def build_messages(sender_email):
+        # Mail to Studio
         studio_msg = EmailMessage()
-        studio_msg["From"] = GMAIL_USER
+        studio_msg["From"] = sender_email
         studio_msg["To"] = STUDIO_EMAIL
 
         if source == "contact":
@@ -69,8 +66,6 @@ def send_email(
             studio_msg["Subject"] = "🚀 New Website Enquiry – Vartistic Studio"
             title = "Website Enquiry"
 
-        phone_display = phone if phone else "Not provided"
-
         studio_msg.set_content(
             f"{title}\n\n"
             f"Name: {name}\n"
@@ -79,12 +74,11 @@ def send_email(
             f"Message:\n{message}"
         )
 
-        smtp.send_message(studio_msg)
-
-        # -------- Confirmation Mail to User --------
+        # Confirmation mail to user
+        user_msg = None
         if email:
             user_msg = EmailMessage()
-            user_msg["From"] = GMAIL_USER
+            user_msg["From"] = sender_email
             user_msg["To"] = email
             user_msg["Subject"] = "Vartistic Studio — We received your enquiry"
             user_msg.set_content(
@@ -93,7 +87,47 @@ def send_email(
                 f"Our team will get back to you shortly.\n\n"
                 f"— Vartistic Studio"
             )
-            smtp.send_message(user_msg)
+
+        return studio_msg, user_msg
+
+    # ---------- TRY PRIMARY SMTP ----------
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(SMTP1_USER, SMTP1_PASS)
+
+            studio_msg, user_msg = build_messages(SMTP1_USER)
+            smtp.send_message(studio_msg)
+            if user_msg:
+                smtp.send_message(user_msg)
+
+            print("✅ Email sent using PRIMARY SMTP")
+            return
+
+    except Exception as e1:
+        print("⚠️ Primary SMTP failed:", e1)
+
+    # ---------- TRY BACKUP SMTP ----------
+    if SMTP2_USER and SMTP2_PASS:
+        try:
+            with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as smtp:
+                smtp.ehlo()
+                smtp.starttls()
+                smtp.login(SMTP2_USER, SMTP2_PASS)
+
+                studio_msg, user_msg = build_messages(SMTP2_USER)
+                smtp.send_message(studio_msg)
+                if user_msg:
+                    smtp.send_message(user_msg)
+
+                print("✅ Email sent using BACKUP SMTP")
+                return
+
+        except Exception as e2:
+            print("❌ Backup SMTP failed:", e2)
+
+    raise RuntimeError("Both SMTP providers failed")
 
 
 # -------------------- API ROUTE --------------------
@@ -117,7 +151,6 @@ def send_mail():
         return attach_cors(resp)
 
     try:
-        # ✅ SEND EMAIL DIRECTLY (NO THREADING)
         send_email(name, email, phone, message, source)
     except Exception as e:
         print("❌ Email send error:", e)
