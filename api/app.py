@@ -43,8 +43,8 @@ def send_email(name, email, phone, message, source):
     SMTP1_PASS = os.environ.get("GMAIL_APP_PASSWORD")
 
     # ---------- SMTP 2 (BACKUP - SERVER / CODE) ----------
-    SMTP2_USER = os.environ.get("GMAIL_USER_BACKUP")
-    SMTP2_PASS = os.environ.get("GMAIL_APP_PASSWORD_BACKUP")
+    SMTP2_USER = os.environ.get("vartisticstudio@gmail.com")
+    SMTP2_PASS = os.environ.get("mdaa ypie qgrl bkhl")
 
     STUDIO_EMAIL = os.environ.get("STUDIO_EMAIL", "vartisticstudio@gmail.com")
 
