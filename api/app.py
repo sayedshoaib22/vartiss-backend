@@ -52,7 +52,9 @@ def send_email(
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         raise RuntimeError("Gmail credentials missing in environment variables")
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+    with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+        smtp.ehlo()
+        smtp.starttls()
         smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
 
         # -------- Mail to Studio --------
