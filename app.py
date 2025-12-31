@@ -43,8 +43,8 @@ def send_mail():
     if not name or not email or not message:
         return jsonify(success=False, error='Missing required fields'), 400
 
-    GMAIL_USER = os.environ.get('vartisticstudio@gmail.com')
-    GMAIL_APP_PASSWORD = os.environ.get('mdaa ypie qgrl bkhl')
+    GMAIL_USER = os.environ.get('sayedshoaib3869224@gmail.com')
+    GMAIL_APP_PASSWORD = os.environ.get('stim lvpg robc tkar')
 
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         return jsonify(success=False, error='Mail credentials not configured'), 500
