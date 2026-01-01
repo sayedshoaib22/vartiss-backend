@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 import os
-import smtplib
-from email.message import EmailMessage
+import requests
 
 app = Flask(__name__)
 
@@ -43,32 +42,16 @@ def send_mail():
     if not name or not email or not message:
         return jsonify(success=False, error='Missing required fields'), 400
 
-    GMAIL_USER = os.environ.get('GMAIL_USER')
-    GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
-
-
-    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
-        return jsonify(success=False, error='Mail credentials not configured'), 500
-
     source = (data.get('source') or 'index').strip().lower()
 
-    msg = EmailMessage()
-    msg['From'] = GMAIL_USER
-    msg['To'] = 'vartisticstudio@gmail.com'
-
-    if source == 'contact':
-        msg['Subject'] = '🚀 New Contact Enquiry – Vartistic Studio'
-        body_intro = 'Contact Page Submission'
-    else:
-        msg['Subject'] = '🚀 New Website Enquiry – Vartistic Studio'
-        body_intro = 'Website Enquiry'
-
+    # Use the same body content as before for Brevo payload
     phone_display = phone if phone else 'Not provided'
 
     # Plain-text body
+    body_intro = 'Website Enquiry'
     body = f"{body_intro}:\n\nName:\n{name}\n\nEmail:\n{email}\n\nPhone:\n{phone_display}\n\nMessage:\n{message}\n"
 
-    # HTML body for better email UI
+    # HTML body for better email UI (kept from previous template)
     html_body = f"""
     <html>
         <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
@@ -95,77 +78,42 @@ def send_mail():
     </html>
     """
 
-    msg.set_content(body)
-    msg.add_alternative(html_body, subtype='html')
+    # Brevo configuration from environment
+    BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+    SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
+
+    if not BREVO_API_KEY:
+        return jsonify(success=False, error='BREVO_API_KEY not configured'), 500
+    if not SENDER_EMAIL:
+        return jsonify(success=False, error='SENDER_EMAIL not configured'), 500
+
+    # Brevo expects JSON payload to /v3/smtp/email
+    payload = {
+        'sender': {'email': SENDER_EMAIL},
+        'to': [{'email': 'vartisticstudio@gmail.com'}],
+        'subject': '🚀 New Website Enquiry – Vartistic Studio',
+        'htmlContent': html_body,
+        'textContent': body,
+    }
+
+    headers = {
+        'api-key': BREVO_API_KEY,
+        'Content-Type': 'application/json'
+    }
 
     try:
-        # Use a short socket timeout so a blocked outbound SMTP connection
-        # doesn't hang the HTTP request for too long. Many hosts block
-        # outbound SMTP ports (465/587) which can cause long hangs.
-        SMTP_TIMEOUT = int(os.environ.get('SMTP_TIMEOUT', '10'))
-        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=SMTP_TIMEOUT) as smtp:
-            smtp.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            smtp.send_message(msg)
-
-            # Send confirmation to user (best-effort). If this fails, we log but still return success
-            user_email_sent = False
-            try:
-                if email:
-                    confirm = EmailMessage()
-                    confirm['From'] = GMAIL_USER
-                    confirm['To'] = email
-                    if source == 'contact':
-                        confirm['Subject'] = "Vartistic Studio — We received your contact enquiry"
-                        note = 'Thank you for contacting us via the Contact page.'
-                    else:
-                        confirm['Subject'] = "Vartistic Studio — We've received your enquiry"
-                        note = 'Thank you for your website enquiry.'
-
-                    confirm_body = (
-                        f"Hi {name or ''},\n\n{note} Our team will connect with you shortly.\n\n"
-                        f"Here is a copy of your submission:\n\nName:\n{name}\n\nEmail:\n{email}\n\n"
-                        f"Phone:\n{phone_display}\n\nMessage:\n{message}\n\n— Vartistic Studio"
-                    )
-
-                    confirm_html = f"""
-                    <html>
-                        <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
-                            <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,0.06);overflow:hidden;">
-                                  <div style="background:linear-gradient(90deg,#b8860b,#ffd700);padding:18px 22px;color:#fff;">
-                                    <h2 style="margin:0;font-size:16px">Vartistic Studio</h2>
-                                </div>
-                                <div style="padding:20px;color:#0f172a;font-size:14px;line-height:1.5">
-                                    <p style="margin:0 0 12px">Hi {name or ''},</p>
-                                    <p style="margin:0 0 16px">{note} Our team will connect with you shortly.</p>
-                                    <div style="background:#f8fafc;padding:14px;border-radius:6px;margin-bottom:12px;">
-                                        <p style="margin:0 0 8px;font-weight:600">Your submission</p>
-                                        <p style="margin:0"><strong>Name:</strong> {name}</p>
-                                        <p style="margin:6px 0 0"><strong>Email:</strong> {email}</p>
-                                        <p style="margin:6px 0 0"><strong>Phone:</strong> {phone_display}</p>
-                                    </div>
-                                    <div style="white-space:pre-wrap;color:#111827">{message}</div>
-                                </div>
-                                <div style="padding:14px 20px;background:#fcfcfd;border-top:1px solid #eef2f7;font-size:12px;color:#6b7280">
-                                    <div>— Vartistic Studio</div>
-                                    <div style="margin-top:6px;color:#9ca3af">We typically reply within 1 business day.</div>
-                                </div>
-                            </div>
-                        </body>
-                    </html>
-                    """
-
-                    confirm.set_content(confirm_body)
-                    confirm.add_alternative(confirm_html, subtype='html')
-                    smtp.send_message(confirm)
-                    user_email_sent = True
-            except Exception:
-                app.logger.exception('Failed to send confirmation email to user')
-
-        return jsonify(success=True, user_email_sent=user_email_sent), 200
-    except Exception as e:
-        # Provide clearer error to logs so we can distinguish connection timeouts
-        app.logger.exception('Failed to send email (SMTP)')
+        resp = requests.post('https://api.brevo.com/v3/smtp/email', json=payload, headers=headers, timeout=15)
+    except requests.RequestException as e:
+        app.logger.exception('Failed to reach Brevo API')
         return jsonify(success=False, error=str(e)), 500
+
+    if 200 <= resp.status_code < 300:
+        return jsonify(success=True), 200
+    else:
+        # Return Brevo response body to help debug failures (not exposing secrets)
+        err_text = resp.text or f'Status {resp.status_code}'
+        app.logger.error('Brevo API error: %s', err_text)
+        return jsonify(success=False, error=err_text), 500
 
 
 if __name__ == '__main__':
