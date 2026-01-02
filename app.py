@@ -42,13 +42,17 @@ def send_mail():
     if not name or not email or not message:
         return jsonify(success=False, error='Missing required fields'), 400
 
-    source = (data.get('source') or 'index').strip().lower()
+    # Detect source safely; default to 'Website Enquiry' when missing
+    raw_source = data.get('source')
+    source = (raw_source or 'Website Enquiry')
+    source_norm = (source or '').strip().lower()
 
     phone_display = phone if phone else 'Not provided'
 
     # Plain-text body
-    body_intro = 'Website Enquiry'
-    body = f"{body_intro}:\n\nName:\n{name}\n\nEmail:\n{email}\n\nPhone:\n{phone_display}\n\nMessage:\n{message}\n"
+    # Prepend Source line and use a human-friendly intro based on source
+    body_intro = source if source else 'Website Enquiry'
+    body = f"Source: {source}\n\n{body_intro}:\n\nName:\n{name}\n\nEmail:\n{email}\n\nPhone:\n{phone_display}\n\nMessage:\n{message}\n"
 
     # HTML body (ADMIN)
     html_body = f"""
@@ -58,6 +62,7 @@ def send_mail():
                   <div style="background:linear-gradient(90deg,#b8860b,#ffd700);padding:20px 24px;color:#fff;">
                     <h1 style="margin:0;font-size:18px">Vartistic Studio</h1>
                     <p style="margin:6px 0 0;font-size:13px;opacity:0.9">{body_intro}</p>
+                    <p style="margin:6px 0 0;font-size:13px;opacity:0.9"><b>Source:</b> {source}</p>
                 </div>
                 <div style="padding:24px;color:#0f172a;font-size:14px;">
                     <table width="100%">
@@ -88,11 +93,17 @@ def send_mail():
         'Content-Type': 'application/json'
     }
 
-    # ---------------- ADMIN EMAIL (UNCHANGED) ----------------
+    # ---------------- ADMIN EMAIL ----------------
+    # Choose subject based on the provided source (defaults handled above)
+    if source_norm == 'portfolio submission':
+        admin_subject = '📁 New Portfolio Submission – Vartistic Studio'
+    else:
+        admin_subject = '🌐 New Website Enquiry – Vartistic Studio'
+
     admin_payload = {
         'sender': {'email': SENDER_EMAIL},
         'to': [{'email': 'vartisticstudio@gmail.com'}],
-        'subject': '🚀 New Website Enquiry – Vartistic Studio',
+        'subject': admin_subject,
         'htmlContent': html_body,
         'textContent': body,
     }
