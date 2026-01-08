@@ -1,30 +1,71 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file, abort
 import os
 import requests
+import sqlite3
+from datetime import datetime
+from io import BytesIO
+
+try:
+    from openpyxl import Workbook
+except Exception:
+    Workbook = None
 
 app = Flask(__name__)
 
-
-# Optional: load .env if python-dotenv is available
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except Exception:
-    pass
+BASE_DIR = os.path.dirname(__file__)
+DB_PATH = os.path.join(BASE_DIR, 'submissions.db')
+EXCEL_PATH = os.path.join(BASE_DIR, 'clients.xlsx')
 
 
-@app.after_request
-def add_cors_headers(response):
-    # Allow simple cross-origin testing from different ports (localhost)
-    response.headers['Access-Control-Allow-Origin'] = '*'
-    response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
-    return response
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            '''
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL,
+                phone TEXT,
+                message TEXT NOT NULL,
+                source TEXT,
+                created_at TEXT NOT NULL
+            )
+            '''
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def sync_excel_from_db():
+    if Workbook is None:
+        raise RuntimeError('openpyxl is required to write Excel files')
+
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        cur = conn.cursor()
+        cur.execute('SELECT id, created_at, name, email, phone, message, source FROM clients ORDER BY created_at ASC')
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Clients'
+    ws.append(['id', 'created_at', 'name', 'email', 'phone', 'message', 'source'])
+    for r in rows:
+        ws.append(list(r))
+
+    wb.save(EXCEL_PATH)
+
+
+init_db()
 
 
 @app.route('/send-mail', methods=['POST', 'OPTIONS'])
 def send_mail():
-    # Respond to CORS preflight immediately
     if request.method == 'OPTIONS':
         return jsonify(success=True), 200
 
@@ -37,133 +78,129 @@ def send_mail():
     email = (data.get('email') or '').strip()
     phone = (data.get('phone') or '').strip()
     message = (data.get('message') or '').strip()
+    source = (data.get('source') or 'Website Enquiry').strip()
 
-    # Basic validation
     if not name or not email or not message:
         return jsonify(success=False, error='Missing required fields'), 400
 
-    # Detect source safely; default to 'Website Enquiry' when missing
-    raw_source = data.get('source')
-    source = (raw_source or 'Website Enquiry')
-    source_norm = (source or '').strip().lower()
+    created_at = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
-    phone_display = phone if phone else 'Not provided'
+    # Save to SQLite DB
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                'INSERT INTO clients (name, email, phone, message, source, created_at) VALUES (?, ?, ?, ?, ?, ?)',
+                (name, email, phone, message, source, created_at)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        return jsonify(success=False, error='Failed to save submission'), 500
 
-    # Plain-text body
-    # Prepend Source line and use a human-friendly intro based on source
-    body_intro = source if source else 'Website Enquiry'
-    body = f"Source: {source}\n\n{body_intro}:\n\nName:\n{name}\n\nEmail:\n{email}\n\nPhone:\n{phone_display}\n\nMessage:\n{message}\n"
+    # Sync Excel from DB (truncate + rewrite)
+    try:
+        sync_excel_from_db()
+    except Exception:
+        return jsonify(success=False, error='Failed to update Excel from database'), 500
 
-    # HTML body (ADMIN)
-    html_body = f"""
-    <html>
-        <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
-            <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,0.08);overflow:hidden;">
-                  <div style="background:linear-gradient(90deg,#b8860b,#ffd700);padding:20px 24px;color:#fff;">
-                    <h1 style="margin:0;font-size:18px">Vartistic Studio</h1>
-                    <p style="margin:6px 0 0;font-size:13px;opacity:0.9">{body_intro}</p>
-                    <p style="margin:6px 0 0;font-size:13px;opacity:0.9"><b>Source:</b> {source}</p>
-                </div>
-                <div style="padding:24px;color:#0f172a;font-size:14px;">
-                    <table width="100%">
-                        <tr><td><b>Name</b></td><td>{name}</td></tr>
-                        <tr><td><b>Email</b></td><td>{email}</td></tr>
-                        <tr><td><b>Phone</b></td><td>{phone_display}</td></tr>
-                    </table>
-                    <div style="margin-top:16px;padding:16px;background:#f8fafc;border-radius:6px;">
-                        {message}
-                    </div>
-                </div>
-            </div>
-        </body>
-    </html>
-    """
-
-    # Brevo configuration
+    # Prepare and attempt to send client confirmation email (non-fatal)
     BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
     SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
 
-    if not BREVO_API_KEY:
-        return jsonify(success=False, error='BREVO_API_KEY not configured'), 500
-    if not SENDER_EMAIL:
-        return jsonify(success=False, error='SENDER_EMAIL not configured'), 500
+    user_subject = 'Vartistic Studio - We\'ve received your enquiry'
+    user_html = f"""
+    <html>
+      <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+        <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;">
+          <div style="background:#0f172a;padding:20px 24px;color:#fff;">
+            <h1 style="margin:0;font-size:20px">We\'ve received your enquiry</h1>
+          </div>
+          <div style="padding:24px;font-size:14px;line-height:1.6;">
+            <p style="margin:0 0 12px;">Hi {name},</p>
+            <p style="margin:0 0 12px;">Thank you for contacting <strong>Vartistic Studio</strong>. We\'ve received your enquiry and a member of our team will be in touch soon.</p>
 
-    headers = {
-        'api-key': BREVO_API_KEY,
-        'Content-Type': 'application/json'
-    }
+            <h2 style="font-size:15px;margin:18px 0 8px;">Your submission</h2>
+            <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:14px;">
+              <tr><td style="width:120px;font-weight:600;">Name</td><td>{name}</td></tr>
+              <tr><td style="font-weight:600;">Email</td><td>{email}</td></tr>
+              <tr><td style="font-weight:600;">Phone</td><td>{phone}</td></tr>
+              <tr><td style="font-weight:600;vertical-align:top;">Message</td><td>{message}</td></tr>
+              <tr><td style="font-weight:600;">Source</td><td>{source}</td></tr>
+              <tr><td style="font-weight:600;">Submitted at (UTC)</td><td>{created_at}</td></tr>
+            </table>
 
-    # ---------------- ADMIN EMAIL ----------------
-    # Choose subject based on the provided source (defaults handled above)
-    if source_norm == 'portfolio submission':
-        admin_subject = '📁 New Portfolio Submission – Vartistic Studio'
-    else:
-        admin_subject = '🌐 New Website Enquiry – Vartistic Studio'
+            <p style="margin:18px 0 0;">Kind regards,<br><strong>Vartistic Studio Team</strong></p>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
 
-    admin_payload = {
-        'sender': {'email': SENDER_EMAIL},
-        'to': [{'email': 'vartisticstudio@gmail.com'}],
-        'subject': admin_subject,
-        'htmlContent': html_body,
-        'textContent': body,
-    }
-
-    try:
-        resp = requests.post(
-            'https://api.brevo.com/v3/smtp/email',
-            json=admin_payload,
-            headers=headers,
-            timeout=15
-        )
-    except requests.RequestException as e:
-        return jsonify(success=False, error=str(e)), 500
-
-    if not (200 <= resp.status_code < 300):
-        return jsonify(success=False, error=resp.text), 500
-
-    # ---------------- USER CONFIRMATION EMAIL (ADDED ONLY) ----------------
     user_payload = {
-        'sender': {'email': SENDER_EMAIL, 'name': 'Vartistic Studio'},
+        'sender': {'email': SENDER_EMAIL or '', 'name': 'Vartistic Studio'},
         'to': [{'email': email}],
-        'subject': 'Vartistic Studio – We’ve received your enquiry',
-        'htmlContent': f"""
-        <html>
-          <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
-            <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;">
-              <div style="background:#0f172a;padding:20px 24px;color:#fff;">
-                <h1 style="margin:0;font-size:20px">We’ve received your enquiry</h1>
-              </div>
-              <div style="padding:24px;font-size:14px;line-height:1.6;">
-                <p style="margin:0 0 12px;">Hi {name},</p>
-                <p style="margin:0 0 12px;">Thank you for contacting <strong>Vartistic Studio</strong>. We’ve received your enquiry and a member of our team will be in touch soon.</p>
-
-                <h2 style="font-size:15px;margin:18px 0 8px;">Your submission</h2>
-                <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:14px;">
-                  <tr><td style="width:120px;font-weight:600;">Name</td><td>{name}</td></tr>
-                  <tr><td style="font-weight:600;">Email</td><td>{email}</td></tr>
-                  <tr><td style="font-weight:600;">Phone</td><td>{phone_display}</td></tr>
-                  <tr><td style="font-weight:600;vertical-align:top;">Message</td><td>{message}</td></tr>
-                </table>
-
-                <p style="margin:18px 0 0;">Kind regards,<br><strong>Vartistic Studio Team</strong></p>
-              </div>
-            </div>
-          </body>
-        </html>
-        """
+        'subject': user_subject,
+        'htmlContent': user_html,
     }
 
     try:
-        requests.post(
-            'https://api.brevo.com/v3/smtp/email',
-            json=user_payload,
-            headers=headers,
-            timeout=15
-        )
+        if BREVO_API_KEY and SENDER_EMAIL:
+            headers = {'api-key': BREVO_API_KEY, 'Content-Type': 'application/json'}
+            requests.post(
+                'https://api.brevo.com/v3/smtp/email',
+                json=user_payload,
+                headers=headers,
+                timeout=15
+            )
     except Exception:
-        pass  # user mail failure should not break admin mail
+        pass
 
     return jsonify(success=True), 200
+
+
+@app.route('/export-excel', methods=['GET'])
+def export_excel():
+    token_required = os.environ.get('EXPORT_TOKEN')
+    if token_required:
+        token = request.headers.get('X-Export-Token') or request.args.get('token')
+        if not token or token != token_required:
+            abort(401)
+
+    if Workbook is None:
+        return jsonify(success=False, error='openpyxl not installed'), 500
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            cur = conn.cursor()
+            cur.execute('SELECT id, created_at, name, email, phone, message, source FROM clients ORDER BY created_at ASC')
+            rows = cur.fetchall()
+        finally:
+            conn.close()
+    except Exception:
+        return jsonify(success=False, error='Failed to read database'), 500
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = 'Clients'
+    ws.append(['id', 'created_at', 'name', 'email', 'phone', 'message', 'source'])
+    for r in rows:
+        ws.append(list(r))
+
+    bio = BytesIO()
+    wb.save(bio)
+    bio.seek(0)
+
+    filename = f"clients_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.xlsx"
+    return send_file(
+        bio,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=filename
+    )
 
 
 if __name__ == '__main__':
