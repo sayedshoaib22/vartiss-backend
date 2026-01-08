@@ -4,6 +4,7 @@ import requests
 import sqlite3
 from datetime import datetime
 from io import BytesIO
+import time
 import logging
 from werkzeug.exceptions import HTTPException
 
@@ -61,7 +62,6 @@ def sync_excel_from_db():
         rows = cur.fetchall()
     finally:
         conn.close()
-
     # Ensure output directory exists
     out_dir = os.path.dirname(EXCEL_PATH)
     if out_dir and not os.path.exists(out_dir):
@@ -71,6 +71,13 @@ def sync_excel_from_db():
             app.logger.exception('Failed to create excel directory')
             raise
 
+    # Logging start
+    try:
+        print('Excel generation: starting, rows=', len(rows))
+        app.logger.info('Excel generation started; rows=%d', len(rows))
+    except Exception:
+        pass
+
     wb = Workbook()
     ws = wb.active
     ws.title = 'Clients'
@@ -78,11 +85,42 @@ def sync_excel_from_db():
     for r in rows:
         ws.append(list(r))
 
-    try:
-        wb.save(EXCEL_PATH)
-    except Exception:
-        app.logger.exception('Failed to save Excel file')
-        raise
+    # Save to a temp file and replace to avoid partial writes / OneDrive locks
+    tmp_path = EXCEL_PATH + '.tmp'
+    save_attempts = 3
+    last_exc = None
+    for attempt in range(1, save_attempts + 1):
+        try:
+            wb.save(tmp_path)
+            # atomic replace
+            try:
+                os.replace(tmp_path, EXCEL_PATH)
+            except Exception:
+                # fallback to rename
+                os.remove(EXCEL_PATH) if os.path.exists(EXCEL_PATH) else None
+                os.rename(tmp_path, EXCEL_PATH)
+            try:
+                print('Excel generation: saved to', EXCEL_PATH)
+                app.logger.info('Excel saved to %s', EXCEL_PATH)
+            except Exception:
+                pass
+            last_exc = None
+            break
+        except Exception as e:
+            last_exc = e
+            app.logger.exception('Attempt %d: Failed to save Excel file', attempt)
+            # small backoff for OneDrive locks
+            time.sleep(1)
+    if last_exc is not None:
+        # cleanup temp if exists
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+        # raise to caller if they want to handle, otherwise log
+        app.logger.exception('Excel generation ultimately failed')
+        raise last_exc
 
 
 init_db()
