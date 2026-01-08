@@ -14,7 +14,8 @@ app = Flask(__name__)
 
 BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, 'submissions.db')
-EXCEL_PATH = os.path.join(BASE_DIR, 'clients.xlsx')
+# Fixed Windows path for Excel output (ensure using raw string)
+EXCEL_PATH = os.path.normpath(r"C:\Users\ss386\OneDrive\Desktop\Vartissss - Copy\exce\clients.xlsx")
 
 
 def init_db():
@@ -50,6 +51,11 @@ def sync_excel_from_db():
         rows = cur.fetchall()
     finally:
         conn.close()
+
+    # Ensure output directory exists
+    out_dir = os.path.dirname(EXCEL_PATH)
+    if out_dir and not os.path.exists(out_dir):
+        os.makedirs(out_dir, exist_ok=True)
 
     wb = Workbook()
     ws = wb.active
