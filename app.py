@@ -125,24 +125,31 @@ def send_mail():
     user_payload = {
         'sender': {'email': SENDER_EMAIL, 'name': 'Vartistic Studio'},
         'to': [{'email': email}],
-        'subject': 'Vartistic Studio – We received your enquiry',
+        'subject': 'Vartistic Studio – We’ve received your enquiry',
         'htmlContent': f"""
-        <p>Hi {name},</p>
+        <html>
+          <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#0f172a;">
+            <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;overflow:hidden;">
+              <div style="background:#0f172a;padding:20px 24px;color:#fff;">
+                <h1 style="margin:0;font-size:20px">We’ve received your enquiry</h1>
+              </div>
+              <div style="padding:24px;font-size:14px;line-height:1.6;">
+                <p style="margin:0 0 12px;">Hi {name},</p>
+                <p style="margin:0 0 12px;">Thank you for contacting <strong>Vartistic Studio</strong>. We’ve received your enquiry and a member of our team will be in touch soon.</p>
 
-        <p>Thank you for contacting <b>Vartistic Studio</b>.</p>
+                <h2 style="font-size:15px;margin:18px 0 8px;">Your submission</h2>
+                <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;font-size:14px;">
+                  <tr><td style="width:120px;font-weight:600;">Name</td><td>{name}</td></tr>
+                  <tr><td style="font-weight:600;">Email</td><td>{email}</td></tr>
+                  <tr><td style="font-weight:600;">Phone</td><td>{phone_display}</td></tr>
+                  <tr><td style="font-weight:600;vertical-align:top;">Message</td><td>{message}</td></tr>
+                </table>
 
-        <p>We have received your enquiry and our team will contact you shortly.</p>
-
-        <hr>
-
-        <p><b>Your submission:</b></p>
-        <p><b>Name:</b> {name}</p>
-        <p><b>Email:</b> {email}</p>
-        <p><b>Phone:</b> {phone_display}</p>
-        <p><b>Message:</b><br>{message}</p>
-
-        <br>
-        <p>Best regards,<br><b>Vartistic Studio Team</b></p>
+                <p style="margin:18px 0 0;">Kind regards,<br><strong>Vartistic Studio Team</strong></p>
+              </div>
+            </div>
+          </body>
+        </html>
         """
     }
 

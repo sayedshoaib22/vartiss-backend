@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Backend Test Form</title>
+  <link rel="stylesheet" href="test.css" />
+</head>
+<body>
+
+  <div class="container">
+    <h2>Backend Test Form</h2>
+    <p>Test Brevo + Excel fallback</p>
+
+    <form id="testForm">
+      <input type="text" id="name" placeholder="Name" required />
+      <input type="email" id="email" placeholder="Email" required />
+      <input type="text" id="phone" placeholder="Phone (optional)" />
+      <textarea id="message" placeholder="Message" required></textarea>
+
+      <select id="source">
+        <option value="Index Page – Quick Enquiry">Index Page – Quick Enquiry</option>
+        <option value="Contact Page – Detailed Enquiry">Contact Page – Detailed Enquiry</option>
+        <option value="Portfolio Submission">Portfolio Submission</option>
+      </select>
+
+      <button type="submit">Send Test</button>
+      <div id="result"></div>
+    </form>
+  </div>
+
+  <script src="test.js"></script>
+</body>
+</html>
