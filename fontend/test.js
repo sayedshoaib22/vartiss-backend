@@ -2,8 +2,8 @@ const form = document.getElementById("testForm");
 const result = document.getElementById("result");
 const button = form.querySelector("button");
 
-// 🔴 CHANGE THIS TO YOUR RAILWAY BACKEND URL
-const API_URL = "https://vartiss-backend-production.up.railway.app/send-mail";
+// Local backend URL for development
+const API_URL = "http://127.0.0.1:5000/send-mail";
 
 form.addEventListener("submit", async (e) => {
   e.preventDefault();

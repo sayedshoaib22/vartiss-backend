@@ -4,6 +4,8 @@ import requests
 import sqlite3
 from datetime import datetime
 from io import BytesIO
+import logging
+from werkzeug.exceptions import HTTPException
 
 try:
     from openpyxl import Workbook
@@ -12,6 +14,10 @@ except Exception:
 
 app = Flask(__name__)
 
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
+app.logger.setLevel(logging.DEBUG)
+
 BASE_DIR = os.path.dirname(__file__)
 DB_PATH = os.path.join(BASE_DIR, 'submissions.db')
 # Fixed Windows path for Excel output (ensure using raw string)
@@ -19,25 +25,29 @@ EXCEL_PATH = os.path.normpath(r"C:\Users\ss386\OneDrive\Desktop\Vartissss - Copy
 
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
     try:
-        cur = conn.cursor()
-        cur.execute(
-            '''
-            CREATE TABLE IF NOT EXISTS clients (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                email TEXT NOT NULL,
-                phone TEXT,
-                message TEXT NOT NULL,
-                source TEXT,
-                created_at TEXT NOT NULL
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                '''
+                CREATE TABLE IF NOT EXISTS clients (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    email TEXT NOT NULL,
+                    phone TEXT,
+                    message TEXT NOT NULL,
+                    source TEXT,
+                    created_at TEXT NOT NULL
+                )
+                '''
             )
-            '''
-        )
-        conn.commit()
-    finally:
-        conn.close()
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        app.logger.exception('Failed to initialize database')
+        raise
 
 
 def sync_excel_from_db():
@@ -55,7 +65,11 @@ def sync_excel_from_db():
     # Ensure output directory exists
     out_dir = os.path.dirname(EXCEL_PATH)
     if out_dir and not os.path.exists(out_dir):
-        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            app.logger.exception('Failed to create excel directory')
+            raise
 
     wb = Workbook()
     ws = wb.active
@@ -64,7 +78,11 @@ def sync_excel_from_db():
     for r in rows:
         ws.append(list(r))
 
-    wb.save(EXCEL_PATH)
+    try:
+        wb.save(EXCEL_PATH)
+    except Exception:
+        app.logger.exception('Failed to save Excel file')
+        raise
 
 
 init_db()
@@ -106,11 +124,11 @@ def send_mail():
     except Exception:
         return jsonify(success=False, error='Failed to save submission'), 500
 
-    # Sync Excel from DB (truncate + rewrite)
+    # Sync Excel from DB (truncate + rewrite) - non-fatal
     try:
         sync_excel_from_db()
     except Exception:
-        return jsonify(success=False, error='Failed to update Excel from database'), 500
+        app.logger.exception('Excel sync failed; continuing')
 
     # Prepare and attempt to send client confirmation email (non-fatal)
     BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
@@ -162,9 +180,25 @@ def send_mail():
                 timeout=15
             )
     except Exception:
-        pass
+        app.logger.exception('Failed to send confirmation email')
 
     return jsonify(success=True), 200
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+    return response
+
+
+@app.errorhandler(Exception)
+def handle_exception(e):
+    if isinstance(e, HTTPException):
+        return jsonify(success=False, error=str(e)), e.code
+    app.logger.exception('Unhandled exception')
+    return jsonify(success=False, error='Internal server error'), 500
 
 
 @app.route('/export-excel', methods=['GET'])
@@ -210,4 +244,4 @@ def export_excel():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='127.0.0.1', port=5000, debug=True)
