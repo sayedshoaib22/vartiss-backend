@@ -51,10 +51,14 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
                     <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;background:#ffffff;border-radius:10px;box-shadow:0 10px 30px rgba(16,24,40,0.08);overflow:hidden;border-collapse:collapse;">
                         <!-- Header -->
                         <tr>
-                            <td style="padding:20px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;text-align:center;vertical-align:middle;">
-                                <div style="height:76px;display:flex;align-items:center;justify-content:center;">
-                                    <span style="display:block;font-family:Poppins, 'Segoe UI', Arial, sans-serif;font-size:28px;font-weight:700;color:#ffffff;margin:0;">{esc_company}</span>
-                                </div>
+                            <td align="center" style="padding:20px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;text-align:center;vertical-align:middle;">
+                                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
+                                    <tr>
+                                        <td align="center" valign="middle" height="76" style="padding:0;">
+                                            <span style="display:inline-block;font-family:Poppins, 'Segoe UI', Arial, sans-serif;font-size:28px;font-weight:700;color:#ffffff;margin:0;">{esc_company}</span>
+                                        </td>
+                                    </tr>
+                                </table>
                             </td>
                         </tr>
 
