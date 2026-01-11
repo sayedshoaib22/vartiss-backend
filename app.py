@@ -44,24 +44,16 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width,initial-scale=1">
     </head>
-    <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Inter, Helvetica, Arial, sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;-webkit-font-smoothing:antialiased;font-size:15px;color:#0f172a;">
+    <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Poppins, 'Segoe UI', Arial, sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;-webkit-font-smoothing:antialiased;font-size:15px;color:#0f172a;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
             <tr>
                 <td align="center">
                     <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;background:#ffffff;border-radius:10px;box-shadow:0 8px 24px rgba(16,24,40,0.08);overflow:hidden;border-collapse:collapse;">
                         <tr>
-                            <td style="padding:22px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;">
-                                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-                                    <tr>
-                                        <td style="vertical-align:middle;">
-                                            <h1 style="margin:0;font-size:22px;line-height:1.05;font-weight:700;color:#ffffff;font-family:Inter, Helvetica, Arial, sans-serif;">{esc_company}</h1>
-                                            <p style="margin:6px 0 0;font-size:13px;opacity:0.95;color:#fff;font-weight:600;font-family:Inter, Helvetica, Arial, sans-serif;">{esc_subtitle}</p>
-                                        </td>
-                                        <td style="width:72px;text-align:right;vertical-align:middle;">
-                                            <div style="width:48px;height:48px;border-radius:8px;background:rgba(255,255,255,0.15);display:inline-block;"></div>
-                                        </td>
-                                    </tr>
-                                </table>
+                            <td style="padding:22px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;text-align:center;vertical-align:middle;">
+                                <div style="display:flex;align-items:center;justify-content:center;height:76px;">
+                                    <h1 style="margin:0;font-size:28px;line-height:1.05;font-weight:800;color:#ffffff;font-family:Poppins, 'Segoe UI', Arial, sans-serif;">{esc_company}</h1>
+                                </div>
                             </td>
                         </tr>
 
@@ -97,11 +89,12 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
                             <td style="padding:18px 24px 24px;background:#ffffff;color:#6b7280;font-size:13px;border-top:1px solid #f1f5f9;">
                                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
                                     <tr>
-                                        <td style="vertical-align:middle;color:#6b7280;">
+                                        <td style="vertical-align:middle;color:#6b7280;text-align:left;">
                                             <div style="font-size:13px;">Best regards,<br><strong style="color:#0f172a;">{esc_company} Team</strong></div>
                                         </td>
                                         <td style="text-align:right;vertical-align:middle;color:#6b7280;font-size:12px;">
-                                            <div>Subject: {esc_subject}</div>
+                                            <!-- Subject removed from footer as per design -->
+                                            <div style="display:none;">{''}</div>
                                         </td>
                                     </tr>
                                 </table>
