@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 import os
 import requests
-import html as html_lib
 import json
 import logging
 import time
@@ -10,7 +9,8 @@ from typing import List, Dict, Any, Optional
 app = Flask(__name__)
 
 # Basic logging configuration
-logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO'))
+log_level = os.environ.get('LOG_LEVEL', 'INFO')
+logging.basicConfig(level=log_level)
 
 
 # Optional: load .env if python-dotenv is available
@@ -138,13 +138,13 @@ def _format_brevo_payload(sender_email: str, sender_name: str, subject: str, htm
     return payload
 
 
-def _send_via_brevo(api_key: str, payload: Dict[str, Any], timeout: int = 10) -> requests.Response:
+def _send_via_brevo(api_key: str, payload: Dict[str, Any], timeout: int = 20) -> requests.Response:
     headers = {"api-key": api_key, "Content-Type": "application/json"}
     session = requests.Session()
     return session.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers, timeout=timeout)
 
 
-def _send_via_resend(api_key: str, sender: str, to: List[str], subject: str, html: str, text: Optional[str] = None, timeout: int = 10) -> requests.Response:
+def _send_via_resend(api_key: str, sender: str, to: List[str], subject: str, html: str, text: Optional[str] = None, timeout: int = 20) -> requests.Response:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload: Dict[str, Any] = {
         "from": sender,
@@ -164,7 +164,8 @@ def send_email_with_fallback(subject: str, html: str, text: str, to_email: str, 
     Returns a dict: {'provider': str, 'status': 'sent'|'failed', 'response': ...}
     """
     logger = logging.getLogger("email_fallback")
-    timeout = 10
+    # Increase timeout to accommodate slow networks / cold starts on hosted platforms
+    timeout = 20
 
     sender_email = sender_email or os.environ.get("SENDER_EMAIL")
     if not sender_email:
@@ -178,36 +179,50 @@ def send_email_with_fallback(subject: str, html: str, text: str, to_email: str, 
 
     last_error: Optional[str] = None
 
-    # Try Brevo keys in order
+    # Try Brevo keys in order, with a small retry for transient network issues
     for idx, key in enumerate(brevo_keys, start=1):
-        try:
-            logger.debug("Attempting Brevo key %d", idx)
-            payload = _format_brevo_payload(sender_email, sender_name, subject, html, text, to_email, to_name, cc, bcc, reply_to)
-            resp = _send_via_brevo(key, payload, timeout=timeout)
-            if 200 <= resp.status_code < 300:
-                return {"provider": f"brevo_{idx}", "status": "sent", "response": resp.text}
-            # Treat 4xx/5xx/429 as failures to move to next provider
-            last_error = f"brevo_{idx} HTTP {resp.status_code}: {resp.text}"
-            logger.warning("Brevo key %d returned status %s", idx, resp.status_code)
-        except requests.RequestException as exc:
-            last_error = f"brevo_{idx} exception: {str(exc)}"
-            logger.exception("Brevo key %d request failed", idx)
-        # brief backoff before trying next provider
-        time.sleep(0.5)
+        provider_name = f"brevo_{idx}"
+        if not key:
+            continue
+        for attempt in (1, 2):
+            try:
+                logger.info("Attempting provider %s (attempt %d)", provider_name, attempt)
+                payload = _format_brevo_payload(sender_email, sender_name, subject, html, text, to_email, to_name, cc, bcc, reply_to)
+                resp = _send_via_brevo(key, payload, timeout=timeout)
+                status = resp.status_code
+                body = (resp.text or '')[:2000]
+                if 200 <= status < 300:
+                    logger.info("Provider %s succeeded (status=%s)", provider_name, status)
+                    return {"provider": provider_name, "status": "sent", "response": body}
+                last_error = f"{provider_name} HTTP {status}: {body}"
+                logger.warning("Provider %s returned HTTP %s; body: %s", provider_name, status, body)
+            except requests.RequestException as exc:
+                err_str = f"{type(exc).__name__}: {str(exc)}"
+                last_error = f"{provider_name} exception: {err_str}"
+                logger.warning("Provider %s request exception: %s", provider_name, err_str)
+            # backoff before retrying or moving to next provider
+            time.sleep(0.8 * attempt)
 
     # If Brevo keys exhausted, try Resend
     if resend_key:
-        try:
-            logger.debug("Attempting Resend as final fallback")
-            sender_formatted = f"{sender_name} <{sender_email}>"
-            resp = _send_via_resend(resend_key, sender_formatted, [to_email], subject, html, text, timeout=timeout)
-            if 200 <= resp.status_code < 300:
-                return {"provider": "resend", "status": "sent", "response": resp.text}
-            last_error = f"resend HTTP {resp.status_code}: {resp.text}"
-            logger.warning("Resend returned status %s", resp.status_code)
-        except requests.RequestException as exc:
-            last_error = f"resend exception: {str(exc)}"
-            logger.exception("Resend request failed")
+        provider_name = "resend"
+        for attempt in (1, 2):
+            try:
+                logger.info("Attempting provider %s (attempt %d)", provider_name, attempt)
+                sender_formatted = f"{sender_name} <{sender_email}>"
+                resp = _send_via_resend(resend_key, sender_formatted, [to_email], subject, html, text, timeout=timeout)
+                status = resp.status_code
+                body = (resp.text or '')[:2000]
+                if 200 <= status < 300:
+                    logger.info("Provider %s succeeded (status=%s)", provider_name, status)
+                    return {"provider": provider_name, "status": "sent", "response": body}
+                last_error = f"{provider_name} HTTP {status}: {body}"
+                logger.warning("Provider %s returned HTTP %s; body: %s", provider_name, status, body)
+            except requests.RequestException as exc:
+                err_str = f"{type(exc).__name__}: {str(exc)}"
+                last_error = f"{provider_name} exception: {err_str}"
+                logger.warning("Provider %s request exception: %s", provider_name, err_str)
+            time.sleep(0.8 * attempt)
 
     # Nothing succeeded
     logger.error("All providers failed: %s", last_error)
@@ -330,6 +345,31 @@ def send_mail():
     except Exception:
         logging.getLogger('send_mail').exception('Unexpected error in send_mail')
         return jsonify(success=False, error='Internal server error'), 500
+
+
+def _check_required_envs() -> None:
+    logger = logging.getLogger('startup')
+    required = ['SENDER_EMAIL']
+    provider_vars = ['BREVO_API_KEY_1', 'BREVO_API_KEY_2', 'RESEND_API_KEY']
+
+    missing_required = [k for k in required if not os.environ.get(k)]
+    if missing_required:
+        logger.error('Missing required environment variables: %s', missing_required)
+    else:
+        sender = os.environ.get('SENDER_EMAIL')
+        if sender and not _is_valid_email(sender):
+            logger.error('SENDER_EMAIL is present but invalid: %s', sender)
+        else:
+            logger.info('SENDER_EMAIL configured')
+
+    present_providers = [k for k in provider_vars if os.environ.get(k)]
+    if not present_providers:
+        logger.warning('No mail provider API keys found in environment (BREVO_API_KEY_1, BREVO_API_KEY_2, RESEND_API_KEY)')
+    else:
+        logger.info('Mail provider env vars present: %s', present_providers)
+
+
+_check_required_envs()
 
 
 if __name__ == '__main__':
