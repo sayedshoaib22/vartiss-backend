@@ -223,7 +223,6 @@ def add_cors_headers(response):
     return response
 
 
-@app.route('/send-mail', methods=['POST', 'OPTIONS'])
 def _get_env(key: str, required: bool = False) -> Optional[str]:
     val = os.environ.get(key)
     if required and not val:
