@@ -3,8 +3,14 @@ import os
 import requests
 import html as html_lib
 import json
+import logging
+import time
+from typing import List, Dict, Any, Optional
 
 app = Flask(__name__)
+
+# Basic logging configuration
+logging.basicConfig(level=os.environ.get('LOG_LEVEL', 'INFO'))
 
 
 # Optional: load .env if python-dotenv is available
@@ -115,63 +121,97 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
 </html>"""
 
 
-def send_email_with_fallback(subject, html, text, to_email, to_name):
-    try:
-        # -------- TRY BREVO FIRST --------
-        brevo_payload = {
-            "sender": {"email": os.environ.get("SENDER_EMAIL", "vartisticstudio@gmail.com"), "name": "Vartistic Studio"},
-            "to": [{"email": to_email, "name": to_name}],
-            "subject": subject,
-            "htmlContent": html,
-            "textContent": text,
-        }
+def _format_brevo_payload(sender_email: str, sender_name: str, subject: str, html: str, text: str, to_email: str, to_name: Optional[str] = None, cc: Optional[List[str]] = None, bcc: Optional[List[str]] = None, reply_to: Optional[Dict[str,str]] = None) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {
+        "sender": {"email": sender_email, "name": sender_name},
+        "to": [{"email": to_email, "name": (to_name or "")}],
+        "subject": subject,
+        "htmlContent": html,
+        "textContent": text,
+    }
+    if cc:
+        payload["cc"] = [{"email": e} for e in cc]
+    if bcc:
+        payload["bcc"] = [{"email": e} for e in bcc]
+    if reply_to:
+        payload["replyTo"] = reply_to
+    return payload
 
-        brevo_headers = {
-            "api-key": os.environ.get("BREVO_API_KEY"),
-            "Content-Type": "application/json",
-        }
 
-        brevo_resp = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            json=brevo_payload,
-            headers=brevo_headers,
-            timeout=10
-        )
+def _send_via_brevo(api_key: str, payload: Dict[str, Any], timeout: int = 10) -> requests.Response:
+    headers = {"api-key": api_key, "Content-Type": "application/json"}
+    session = requests.Session()
+    return session.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers, timeout=timeout)
 
-        if 200 <= brevo_resp.status_code < 300:
-            return {"provider": "brevo", "status": "sent", "response": brevo_resp.text}
 
-        raise Exception(f"Brevo failed: {brevo_resp.status_code} {brevo_resp.text}")
+def _send_via_resend(api_key: str, sender: str, to: List[str], subject: str, html: str, text: Optional[str] = None, timeout: int = 10) -> requests.Response:
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    payload: Dict[str, Any] = {
+        "from": sender,
+        "to": to,
+        "subject": subject,
+        "html": html,
+    }
+    if text:
+        payload["text"] = text
+    session = requests.Session()
+    return session.post("https://api.resend.com/emails", json=payload, headers=headers, timeout=timeout)
 
-    except Exception:
-        # -------- FALLBACK TO RESEND --------
-        resend_api_key = os.environ.get('RESEND_API_KEY')
-        if not resend_api_key:
-            raise Exception('Both Brevo failed and RESEND_API_KEY not configured')
 
-        resend_headers = {
-            "Authorization": f"Bearer {resend_api_key}",
-            "Content-Type": "application/json",
-        }
+def send_email_with_fallback(subject: str, html: str, text: str, to_email: str, to_name: Optional[str] = None, *, sender_email: Optional[str] = None, sender_name: str = "Vartistic Studio", cc: Optional[List[str]] = None, bcc: Optional[List[str]] = None, reply_to: Optional[Dict[str,str]] = None) -> Dict[str, Any]:
+    """
+    Attempts to send email using BREVO_API_KEY_1, then BREVO_API_KEY_2, then RESEND_API_KEY.
+    Returns a dict: {'provider': str, 'status': 'sent'|'failed', 'response': ...}
+    """
+    logger = logging.getLogger("email_fallback")
+    timeout = 10
 
-        resend_payload = {
-            "from": "Vartistic Studio <onboarding@resend.dev>",
-            "to": [to_email],
-            "subject": subject,
-            "html": html,
-        }
+    sender_email = sender_email or os.environ.get("SENDER_EMAIL")
+    if not sender_email:
+        raise RuntimeError("SENDER_EMAIL environment variable is required")
 
-        resend_resp = requests.post(
-            "https://api.resend.com/emails",
-            json=resend_payload,
-            headers=resend_headers,
-            timeout=10
-        )
+    brevo_keys = [os.environ.get("BREVO_API_KEY_1"), os.environ.get("BREVO_API_KEY_2")]
+    resend_key = os.environ.get("RESEND_API_KEY")
 
-        if 200 <= resend_resp.status_code < 300:
-            return {"provider": "resend", "status": "sent", "response": resend_resp.text}
+    # Normalize list: only keep non-empty keys
+    brevo_keys = [k for k in brevo_keys if k]
 
-        raise Exception(f"Both Brevo and Resend failed: {resend_resp.status_code} {resend_resp.text}")
+    last_error: Optional[str] = None
+
+    # Try Brevo keys in order
+    for idx, key in enumerate(brevo_keys, start=1):
+        try:
+            logger.debug("Attempting Brevo key %d", idx)
+            payload = _format_brevo_payload(sender_email, sender_name, subject, html, text, to_email, to_name, cc, bcc, reply_to)
+            resp = _send_via_brevo(key, payload, timeout=timeout)
+            if 200 <= resp.status_code < 300:
+                return {"provider": f"brevo_{idx}", "status": "sent", "response": resp.text}
+            # Treat 4xx/5xx/429 as failures to move to next provider
+            last_error = f"brevo_{idx} HTTP {resp.status_code}: {resp.text}"
+            logger.warning("Brevo key %d returned status %s", idx, resp.status_code)
+        except requests.RequestException as exc:
+            last_error = f"brevo_{idx} exception: {str(exc)}"
+            logger.exception("Brevo key %d request failed", idx)
+        # brief backoff before trying next provider
+        time.sleep(0.5)
+
+    # If Brevo keys exhausted, try Resend
+    if resend_key:
+        try:
+            logger.debug("Attempting Resend as final fallback")
+            sender_formatted = f"{sender_name} <{sender_email}>"
+            resp = _send_via_resend(resend_key, sender_formatted, [to_email], subject, html, text, timeout=timeout)
+            if 200 <= resp.status_code < 300:
+                return {"provider": "resend", "status": "sent", "response": resp.text}
+            last_error = f"resend HTTP {resp.status_code}: {resp.text}"
+            logger.warning("Resend returned status %s", resp.status_code)
+        except requests.RequestException as exc:
+            last_error = f"resend exception: {str(exc)}"
+            logger.exception("Resend request failed")
+
+    # Nothing succeeded
+    logger.error("All providers failed: %s", last_error)
+    return {"provider": "none", "status": "failed", "error": last_error}
 
 
 @app.after_request
@@ -221,14 +261,39 @@ def send_mail():
         f"Message:\n{message}\n"
     )
 
-        # We'll use the reusable HTML template when composing emails below.
+    # HTML body (ADMIN) - escape to avoid injection and preserve line breaks
+    esc_name = html_lib.escape(name)
+    esc_email = html_lib.escape(email)
+    esc_phone = html_lib.escape(phone_display)
+    esc_source = html_lib.escape(source)
+    esc_message = html_lib.escape(message).replace('\n', '<br>')
 
-    # Brevo configuration - must be provided via environment variables
-    BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+    html_body = f"""
+    <html>
+      <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
+        <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,0.08);overflow:hidden;">
+          <div style="background:linear-gradient(90deg,#b8860b,#ffd700);padding:20px 24px;color:#fff;">
+            <h1 style="margin:0;font-size:18px">Vartistic Studio</h1>
+            <p style="margin:6px 0 0;font-size:13px;opacity:0.9">{html_lib.escape(body_intro)}</p>
+            <p style="margin:6px 0 0;font-size:13px;opacity:0.9"><b>Source:</b> {esc_source}</p>
+          </div>
+          <div style="padding:24px;color:#0f172a;font-size:14px;">
+            <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
+              <tr><td style="width:120px;font-weight:600">Name</td><td>{esc_name}</td></tr>
+              <tr><td style="width:120px;font-weight:600">Email</td><td>{esc_email}</td></tr>
+              <tr><td style="width:120px;font-weight:600">Phone</td><td>{esc_phone}</td></tr>
+            </table>
+            <div style="margin-top:16px;padding:16px;background:#f8fafc;border-radius:6px;">
+              {esc_message}
+            </div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    # Sender configuration (API keys are loaded inside the send helper)
     SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
-
-    if not BREVO_API_KEY:
-        return jsonify(success=False, error='BREVO_API_KEY not configured'), 500
     if not SENDER_EMAIL:
         return jsonify(success=False, error='SENDER_EMAIL not configured'), 500
 
