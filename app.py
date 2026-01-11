@@ -48,56 +48,48 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
             <tr>
                 <td align="center">
-                    <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;background:#ffffff;border-radius:10px;box-shadow:0 8px 24px rgba(16,24,40,0.08);overflow:hidden;border-collapse:collapse;">
+                    <table role="presentation" width="680" cellpadding="0" cellspacing="0" style="max-width:680px;width:100%;background:#ffffff;border-radius:10px;box-shadow:0 10px 30px rgba(16,24,40,0.08);overflow:hidden;border-collapse:collapse;">
+                        <!-- Header -->
                         <tr>
-                            <td style="padding:22px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;text-align:center;vertical-align:middle;">
-                                <div style="display:flex;align-items:center;justify-content:center;height:76px;">
-                                    <h1 style="margin:0;font-size:28px;line-height:1.05;font-weight:800;color:#ffffff;font-family:Poppins, 'Segoe UI', Arial, sans-serif;">{esc_company}</h1>
+                            <td style="padding:20px 24px;background:linear-gradient(90deg,#b8860b 0%,#ffd700 100%);color:#ffffff;text-align:center;vertical-align:middle;">
+                                <div style="height:76px;display:flex;align-items:center;justify-content:center;">
+                                    <span style="display:block;font-family:Poppins, 'Segoe UI', Arial, sans-serif;font-size:28px;font-weight:700;color:#ffffff;margin:0;">{esc_company}</span>
                                 </div>
                             </td>
                         </tr>
 
+                        <!-- Body -->
                         <tr>
-                            <td style="padding:24px 24px 20px;color:#0f172a;font-size:15px;line-height:1.45;">
+                            <td style="padding:28px 28px 20px;background:#ffffff;color:#0f172a;font-size:15px;line-height:1.45;">
                                 <p style="margin:0 0 14px;font-size:15px;">Hello{', ' + esc_name if esc_name else ''},</p>
-
-                                <p style="margin:0 0 18px;font-size:15px;">We received the following submission. Below are the details:</p>
+                                <p style="margin:0 0 18px;font-size:15px;color:#374151;">We received the following submission. Below are the details:</p>
 
                                 <table role="presentation" width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;">
                                     <tr>
-                                        <td style="width:130px;font-weight:600;padding:8px 8px 8px 0;color:#0f172a;font-size:14px;vertical-align:top;">Name</td>
-                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;">{esc_name}</td>
+                                        <td style="width:140px;padding:8px 8px 8px 0;color:#6b7280;font-size:14px;font-weight:600;vertical-align:top;">Name</td>
+                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;font-weight:600;">{esc_name}</td>
                                     </tr>
                                     <tr>
-                                        <td style="width:130px;font-weight:600;padding:8px 8px 8px 0;color:#0f172a;font-size:14px;vertical-align:top;">Email</td>
-                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;">{esc_email}</td>
+                                        <td style="width:140px;padding:8px 8px 8px 0;color:#6b7280;font-size:14px;font-weight:600;vertical-align:top;">Email</td>
+                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;font-weight:600;">{esc_email}</td>
                                     </tr>
                                     <tr>
-                                        <td style="width:130px;font-weight:600;padding:8px 8px 8px 0;color:#0f172a;font-size:14px;vertical-align:top;">Phone</td>
-                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;">{esc_phone}</td>
+                                        <td style="width:140px;padding:8px 8px 8px 0;color:#6b7280;font-size:14px;font-weight:600;vertical-align:top;">Phone</td>
+                                        <td style="padding:8px;background:transparent;border-radius:4px;color:#0f172a;font-size:14px;font-weight:600;">{esc_phone}</td>
                                     </tr>
                                 </table>
 
-                                <div style="background:#f8fafc;border:1px solid #eef2f7;padding:16px;border-radius:8px;color:#0f172a;">
+                                <div style="background:#f7f8fa;border-radius:8px;border-left:4px solid #b8860b;padding:16px;color:#334155;font-size:14px;">
                                     <div style="font-weight:600;margin-bottom:8px;color:#0f172a;font-size:14px;">Message</div>
-                                    <div style="color:#334155;font-size:14px;">{esc_message}</div>
+                                    <div style="white-space:pre-wrap;">{esc_message}</div>
                                 </div>
                             </td>
                         </tr>
 
+                        <!-- Footer -->
                         <tr>
                             <td style="padding:18px 24px 24px;background:#ffffff;color:#6b7280;font-size:13px;border-top:1px solid #f1f5f9;">
-                                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">
-                                    <tr>
-                                        <td style="vertical-align:middle;color:#6b7280;text-align:left;">
-                                            <div style="font-size:13px;">Best regards,<br><strong style="color:#0f172a;">{esc_company} Team</strong></div>
-                                        </td>
-                                        <td style="text-align:right;vertical-align:middle;color:#6b7280;font-size:12px;">
-                                            <!-- Subject removed from footer as per design -->
-                                            <div style="display:none;">{''}</div>
-                                        </td>
-                                    </tr>
-                                </table>
+                                <div style="font-size:13px;color:#6b7280;">Best regards,<br><strong style="color:#0f172a;">{esc_company} Team</strong></div>
                             </td>
                         </tr>
 
