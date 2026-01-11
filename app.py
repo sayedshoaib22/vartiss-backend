@@ -224,138 +224,113 @@ def add_cors_headers(response):
 
 
 @app.route('/send-mail', methods=['POST', 'OPTIONS'])
+def _get_env(key: str, required: bool = False) -> Optional[str]:
+    val = os.environ.get(key)
+    if required and not val:
+        raise RuntimeError(f"Missing required environment variable: {key}")
+    return val
+
+
+def _is_valid_email(email: str) -> bool:
+    import re
+    if not email:
+        return False
+    if len(email) > 254:
+        return False
+    pattern = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
+    return re.match(pattern, email) is not None
+
+
+def _parse_json_request() -> Dict[str, Any]:
+    try:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return {}
+        return data
+    except Exception:
+        return {}
+
+
+@app.route('/send-mail', methods=['POST', 'OPTIONS'])
 def send_mail():
-    # Respond to CORS preflight immediately
+    logger = logging.getLogger('send_mail')
+    # Quick CORS preflight handling
     if request.method == 'OPTIONS':
         return jsonify(success=True), 200
 
     try:
-        data = request.get_json(force=True)
+        data = _parse_json_request()
+
+        name = (data.get('name') or '').strip()
+        email = (data.get('email') or '').strip()
+        phone = (data.get('phone') or '').strip()
+        message = (data.get('message') or '').strip()
+        source = (data.get('source') or 'Website Enquiry').strip()
+
+        # Validate required fields
+        if not name or not email or not message:
+            return jsonify(success=False, error='Missing required fields: name, email, message'), 400
+        if not _is_valid_email(email):
+            return jsonify(success=False, error='Invalid email address'), 400
+        if len(name) > 200 or len(message) > 5000:
+            return jsonify(success=False, error='Payload too large'), 413
+
+        phone_display = phone if phone else 'Not provided'
+        body_intro = source or 'Website Enquiry'
+        body = (
+            f"Source: {source}\n\n"
+            f"{body_intro}:\n\n"
+            f"Name: {name}\n"
+            f"Email: {email}\n"
+            f"Phone: {phone_display}\n\n"
+            f"Message:\n{message}\n"
+        )
+
+        # Prepare HTML bodies using existing template helper which escapes inputs
+        admin_subject = '📁 New Portfolio Submission – Vartistic Studio' if source.strip().lower() == 'portfolio submission' else '🌐 New Website Enquiry – Vartistic Studio'
+        admin_html = render_email_template(name, email, phone_display, message, subject=admin_subject, company='Vartistic Studio', subtitle=body_intro + ' (Admin)')
+
+        client_subject = 'Vartistic Studio – We received your enquiry'
+        client_html = render_email_template(name, email, phone_display, message, subject=client_subject, company='Vartistic Studio', subtitle=body_intro + ' (Confirmation)')
+
+        # Ensure sender email configured
+        try:
+            sender_email = _get_env('SENDER_EMAIL', required=True)
+        except Exception:
+            logger.exception('SENDER_EMAIL not configured')
+            return jsonify(success=False, error='Server email configuration error'), 500
+
+        # Send admin email (must succeed for form to be considered delivered)
+        try:
+            admin_result = send_email_with_fallback(admin_subject, admin_html, body, 'vartisticstudio@gmail.com', 'Vartistic Studio', sender_email=sender_email)
+        except Exception:
+            logger.exception('Admin email send exception')
+            return jsonify(success=False, error='Failed to send email'), 502
+
+        if admin_result.get('status') != 'sent':
+            logger.error('Admin email failed: %s', admin_result)
+            return jsonify(success=False, error='Failed to send email'), 502
+
+        # Send client confirmation (best-effort; don't fail the whole request)
+        client_email_sent = False
+        try:
+            client_result = send_email_with_fallback(client_subject, client_html, body, email, name, sender_email=sender_email)
+            client_email_sent = client_result.get('status') == 'sent'
+            if not client_email_sent:
+                logger.warning('Client confirmation not sent: %s', client_result)
+        except Exception:
+            logger.exception('Client confirmation send exception')
+
+        payload = {
+            'success': True,
+            'admin_email_sent': True,
+            'client_email_sent': client_email_sent,
+        }
+        return jsonify(payload), 200
+
     except Exception:
-        data = {}
-
-    name = (data.get('name') or '').strip()
-    email = (data.get('email') or '').strip()
-    phone = (data.get('phone') or '').strip()
-    message = (data.get('message') or '').strip()
-
-    # Basic validation
-    if not name or not email or not message:
-        return jsonify(success=False, error='Missing required fields'), 400
-
-    # Detect source safely; default to 'Website Enquiry' when missing
-    raw_source = data.get('source')
-    source = (raw_source or 'Website Enquiry')
-    source_norm = (source or '').strip().lower()
-
-    phone_display = phone if phone else 'Not provided'
-
-    # Plain-text body
-    body_intro = source if source else 'Website Enquiry'
-    body = (
-        f"Source: {source}\n\n"
-        f"{body_intro}:\n\n"
-        f"Name: {name}\n"
-        f"Email: {email}\n"
-        f"Phone: {phone_display}\n\n"
-        f"Message:\n{message}\n"
-    )
-
-    # HTML body (ADMIN) - escape to avoid injection and preserve line breaks
-    esc_name = html_lib.escape(name)
-    esc_email = html_lib.escape(email)
-    esc_phone = html_lib.escape(phone_display)
-    esc_source = html_lib.escape(source)
-    esc_message = html_lib.escape(message).replace('\n', '<br>')
-
-    html_body = f"""
-    <html>
-      <body style="margin:0;padding:20px;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;">
-        <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:8px;box-shadow:0 2px 8px rgba(16,24,40,0.08);overflow:hidden;">
-          <div style="background:linear-gradient(90deg,#b8860b,#ffd700);padding:20px 24px;color:#fff;">
-            <h1 style="margin:0;font-size:18px">Vartistic Studio</h1>
-            <p style="margin:6px 0 0;font-size:13px;opacity:0.9">{html_lib.escape(body_intro)}</p>
-            <p style="margin:6px 0 0;font-size:13px;opacity:0.9"><b>Source:</b> {esc_source}</p>
-          </div>
-          <div style="padding:24px;color:#0f172a;font-size:14px;">
-            <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;">
-              <tr><td style="width:120px;font-weight:600">Name</td><td>{esc_name}</td></tr>
-              <tr><td style="width:120px;font-weight:600">Email</td><td>{esc_email}</td></tr>
-              <tr><td style="width:120px;font-weight:600">Phone</td><td>{esc_phone}</td></tr>
-            </table>
-            <div style="margin-top:16px;padding:16px;background:#f8fafc;border-radius:6px;">
-              {esc_message}
-            </div>
-          </div>
-        </div>
-      </body>
-    </html>
-    """
-
-    # Sender configuration (API keys are loaded inside the send helper)
-    SENDER_EMAIL = os.environ.get('SENDER_EMAIL')
-    if not SENDER_EMAIL:
-        return jsonify(success=False, error='SENDER_EMAIL not configured'), 500
-
-    headers = {
-        'api-key': BREVO_API_KEY,
-        'Content-Type': 'application/json'
-    }
-
-    # ---------------- ADMIN EMAIL ----------------
-    # Choose subject based on the provided source (defaults handled above)
-    if source_norm == 'portfolio submission':
-        admin_subject = '📁 New Portfolio Submission – Vartistic Studio'
-    else:
-        admin_subject = '🌐 New Website Enquiry – Vartistic Studio'
-
-    # Render the same HTML for admin and client with minor subtitle differences
-    admin_html = render_email_template(name, email, phone_display, message, subject=admin_subject, company='Vartistic Studio', subtitle=body_intro + ' (Admin)')
-
-    admin_payload = {
-        'sender': {'email': SENDER_EMAIL, 'name': 'Vartistic Studio'},
-        'to': [{'email': 'vartisticstudio@gmail.com'}],
-        'subject': admin_subject,
-        'htmlContent': admin_html,
-        'textContent': body,
-    }
-
-    try:
-        admin_result = send_email_with_fallback(admin_subject, admin_html, body, 'vartisticstudio@gmail.com', 'Vartistic Studio')
-    except Exception as e:
-        return jsonify(success=False, error=str(e)), 500
-    if admin_result.get('status') != 'sent':
-        return jsonify(success=False, error='Admin email failed', details=admin_result), 500
-
-    # ---------------- USER CONFIRMATION EMAIL ----------------
-    client_subject = 'Vartistic Studio – We received your enquiry'
-    client_html = render_email_template(name, email, phone_display, message, subject=client_subject, company='Vartistic Studio', subtitle=body_intro + ' (Confirmation)')
-
-    user_payload = {
-            'sender': {'email': SENDER_EMAIL, 'name': 'Vartistic Studio'},
-            'to': [{'email': email, 'name': name}],
-            'subject': client_subject,
-            'htmlContent': client_html,
-            'textContent': body,
-    }
-
-    client_email_sent = False
-    client_error = None
-    try:
-        client_result = send_email_with_fallback(client_subject, client_html, body, email, name)
-        if client_result.get('status') == 'sent':
-            client_email_sent = True
-        else:
-            client_error = json.dumps(client_result)
-    except Exception as e:
-        client_error = str(e)
-
-    # Admin email succeeded; client email may or may not have succeeded.
-    response_payload = {'success': True, 'admin_email_sent': True, 'client_email_sent': client_email_sent}
-    if client_error:
-        response_payload['client_error'] = client_error
-
-    return jsonify(response_payload), 200
+        logging.getLogger('send_mail').exception('Unexpected error in send_mail')
+        return jsonify(success=False, error='Internal server error'), 500
 
 
 if __name__ == '__main__':
