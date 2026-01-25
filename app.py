@@ -21,7 +21,19 @@ except Exception:
     pass
 
 
-def render_email_template(name, email, phone, message, subject="Website Enquiry", company="Vartistic Studio", subtitle=None):
+def format_phone(phone):
+    if not phone:
+        return 'Not provided'
+    phone = phone.strip()
+    if phone.startswith('+'):
+        return phone
+    # Assume Indian if 10 digits starting with 6-9
+    if len(phone) == 10 and phone.isdigit() and phone[0] in '6789':
+        return '+91' + phone
+    return phone
+
+
+def render_email_template(name, email, phone, message, subject="Website Enquiry", company="Vartistic Studio", subtitle=None, body_text=None):
         """
         Returns an HTML email (string) for both admin and client with inline CSS only.
         All user inputs are escaped. The same template can be reused for admin or client
@@ -37,6 +49,9 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
         esc_subject = esc(subject or "")
         esc_company = esc(company or "Vartistic Studio")
         esc_subtitle = esc(subtitle or esc_subject)
+        if not body_text:
+            body_text = "We received the following submission. Below are the details:"
+        esc_body_text = esc(body_text).replace('\n', '<br>')
 
         return f"""<!doctype html>
 <html lang="en">
@@ -66,7 +81,7 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
                         <tr>
                             <td style="padding:28px 28px 20px;background:#ffffff;color:#0f172a;font-size:15px;line-height:1.45;">
                                 <p style="margin:0 0 14px;font-size:15px;">Hello{', ' + esc_name if esc_name else ''},</p>
-                                <p style="margin:0 0 18px;font-size:15px;color:#374151;">We received the following submission. Below are the details:</p>
+                                <p style="margin:0 0 18px;font-size:15px;color:#374151;">{esc_body_text}</p>
 
                                 <table role="presentation" width="100%" cellpadding="8" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px;">
                                     <tr>
@@ -94,15 +109,11 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
                         <tr>
                             <td style="padding:18px 24px 24px;background:#ffffff;color:#6b7280;font-size:13px;border-top:1px solid #f1f5f9;">
                                 <div style="font-size:13px;color:#6b7280;">Best regards,<br><strong style="color:#0f172a;">{esc_company} Team</strong></div>
+                                <div style="margin-top:10px;font-size:12px;color:#9ca3af;text-align:center;">🌐 Vartistic Studio | Creative Digital Solutions</div>
                             </td>
                         </tr>
 
                     </table>
-                </td>
-            </tr>
-            <tr>
-                <td align="center" style="padding-top:12px;font-size:12px;color:#9aa4b2;">
-                    <div style="max-width:680px;width:100%;text-align:center;">© {esc_company}. All rights reserved.</div>
                 </td>
             </tr>
         </table>
@@ -264,11 +275,11 @@ def send_mail():
     try:
         data = _parse_json_request()
 
-        name = (data.get('name') or '').strip()
-        email = (data.get('email') or '').strip()
-        phone = (data.get('phone') or '').strip()
-        message = (data.get('message') or '').strip()
-        source = (data.get('source') or 'Website Enquiry').strip()
+        name = (data.get('name') or request.form.get('name') or '').strip()
+        email = (data.get('email') or request.form.get('email') or '').strip()
+        phone = (data.get('phone') or request.form.get('phone') or '').strip()
+        message = (data.get('message') or request.form.get('message') or '').strip()
+        source = (data.get('source') or request.form.get('source') or 'Website Enquiry').strip()
 
         # Validate required fields
         if not name or not email or not message:
@@ -278,7 +289,7 @@ def send_mail():
         if len(name) > 200 or len(message) > 5000:
             return jsonify(success=False, error='Payload too large'), 413
 
-        phone_display = phone if phone else 'Not provided'
+        phone_display = format_phone(phone)
         body_intro = source or 'Website Enquiry'
         body = (
             f"Source: {source}\n\n"
@@ -290,11 +301,12 @@ def send_mail():
         )
 
         # Prepare HTML bodies using existing template helper which escapes inputs
-        admin_subject = '📁 New Portfolio Submission – Vartistic Studio' if source.strip().lower() == 'portfolio submission' else '🌐 New Website Enquiry – Vartistic Studio'
+        admin_subject = 'New Website Enquiry Received – Vartistic Studio'
         admin_html = render_email_template(name, email, phone_display, message, subject=admin_subject, company='Vartistic Studio', subtitle=body_intro + ' (Admin)')
 
-        client_subject = 'Vartistic Studio – We received your enquiry'
-        client_html = render_email_template(name, email, phone_display, message, subject=client_subject, company='Vartistic Studio', subtitle=body_intro + ' (Confirmation)')
+        client_subject = "Thanks for contacting Vartistic Studio – We'll get back within 24 hours"
+        client_body_text = "Thank you for contacting Vartistic Studio. Our team has received your request and will contact you within 24 hours.\n\nFor your records, here are the details you submitted:"
+        client_html = render_email_template(name, email, phone_display, message, subject=client_subject, company='Vartistic Studio', subtitle=body_intro + ' (Confirmation)', body_text=client_body_text)
 
         # Ensure sender email configured
         try:
