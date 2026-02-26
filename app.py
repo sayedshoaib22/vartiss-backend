@@ -109,10 +109,7 @@ def render_email_template(name, email, phone, message, subject="Website Enquiry"
                         <tr>
                             <td style="padding:18px 24px 24px;background:#ffffff;color:#6b7280;font-size:13px;border-top:1px solid #f1f5f9;">
                                 <div style="font-size:13px;color:#6b7280;">Best regards,<br><strong style="color:#0f172a;">{esc_company} Team</strong></div>
-                                <div style="margin-top:10px;font-size:12px;color:#9ca3af;text-align:center;">
-                                    <img src="image/logo.jpg" alt="Vartistic Studio logo" style="height:16px;vertical-align:middle;margin-right:4px;">
-                                    Vartistic Studio | Creative Digital Solutions
-                                </div>
+                                <div style="margin-top:10px;font-size:12px;color:#9ca3af;text-align:center;">🌐 Vartistic Studio | Creative Digital Solutions</div>
                             </td>
                         </tr>
 
